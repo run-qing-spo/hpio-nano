@@ -14,6 +14,7 @@ unsafe impl Sync for SlabPool {}
 
 impl SlabPool {
     pub fn new(count: usize, slab_size: usize) -> Self {
+        // Direct I/O 场景，页对齐
         let layout = Layout::from_size_align(slab_size, 4096)
             .expect("invalid layout");
         let mut slabs = Vec::with_capacity(count);
@@ -43,7 +44,10 @@ impl SlabPool {
         }
     }
     fn release(&self, index: usize) {
-        self.free_list.push(index).expect("free list overflow");
+        if let Err(_) = self.free_list.push(index) {
+            // release 模式下也能感知到异常，但不会 panic
+            eprintln!("BUG: free list overflow (index {})", index);
+        }
     }
     pub fn slab_size(&self) -> usize {
         self.slab_size
