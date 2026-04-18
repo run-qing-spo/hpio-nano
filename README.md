@@ -151,9 +151,3 @@ Throughput:  1.62 GB/s
 - `bytes_per_worker` 必须是 `chunk_size` 的整数倍（启动期校验）。
 - 多 worker 写入的"逻辑顺序"由 main 接收顺序决定，因此文件中的块布局与 worker tag 无对应关系；当前不做内容校验，tag 仅作调试标记。
 - 不支持运行中扩缩容线程数。
-
----
-
-## 许可证
-
-未指定。请按需在仓库根目录添加 `LICENSE`。
