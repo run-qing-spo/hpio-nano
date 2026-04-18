@@ -30,7 +30,8 @@ impl UringWriter {
         })
     }
 
-    /// 提交一个写请求。如果环已满，先收割完成项腾出空间。
+    /// 提交一个写请求。如果环已满，先阻塞等至少一个 CQE 再提交，
+    /// 从而保证 SQ 永远有空位，不会走到 "SQ full" 这个错误路径。
     /// 返回在腾空间过程中收割到的完成项。
     pub fn submit_write(
         &mut self,
@@ -41,8 +42,10 @@ impl UringWriter {
     ) -> io::Result<Vec<WriteCompletion>> {
         let mut completions = Vec::new();
 
-        // 环已满，必须先收割再提交
+        // 环已满：必须先收割。为了消除"CQ 暂时为空 → push 返回 SQ full"
+        // 这一竞态，使用 submit_and_wait(1) 阻塞至少一个完成项到达。
         if self.inflight >= self.max_inflight {
+            self.ring.submit_and_wait(1)?;
             self.drain_completions(&mut completions)?;
         }
 
@@ -58,7 +61,7 @@ impl UringWriter {
             self.ring
                 .submission()
                 .push(&sqe)
-                .map_err(|_| io::Error::new(io::ErrorKind::Other, "SQ full"))?;
+                .map_err(|_| io::Error::other("SQ full"))?;
         }
 
         self.ring.submit()?;
@@ -72,6 +75,23 @@ impl UringWriter {
         let mut completions = Vec::new();
         self.drain_completions(&mut completions)?;
         Ok(completions)
+    }
+
+    /// 阻塞至少等待一个 CQE 到达（当有在途 IO 时），然后一次性收割所有可用完成项。
+    /// 供 main 在 "通道暂时没东西但仍有 inflight" 场景下使用，避免忙等。
+    /// 若没有 inflight，立刻返回空向量（不阻塞）。
+    pub fn wait_completions(&mut self) -> io::Result<Vec<WriteCompletion>> {
+        let mut completions = Vec::new();
+        if self.inflight == 0 {
+            return Ok(completions);
+        }
+        self.ring.submit_and_wait(1)?;
+        self.drain_completions(&mut completions)?;
+        Ok(completions)
+    }
+
+    pub fn inflight(&self) -> u32 {
+        self.inflight
     }
 
     /// 等待所有在途 IO 完成。
